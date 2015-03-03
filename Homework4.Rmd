@@ -47,8 +47,126 @@ file_list <- lapply(files, read.table, sep='\t', header=TRUE)
 # Subset to only those rows where Gene contains only non-space characters
 # This addresses problems with T14 file containing 28 invalid rows at end of file
 file_list <- lapply(file_list, function(file_list)subset(file_list, grepl('^[^[:space:]]+$', Gene)))
+<<<<<<< HEAD
+
+# Remove duplicated rows
+file_list_unique <- lapply(file_list, function(x){x<-x[!duplicated(x$Gene),]; 
+                                                  x <- x[order(x$Gene),]; 
+                                                  rownames(x) <- x$Gene;
+                                                  x[,-1]})
+# Take the intersection of all genes
+gene_list <- Reduce(intersect, lapply(file_list_unique, rownames))
+file_list_unique <- lapply(file_list_unique, "[", gene_list,)
+matrix <- as.matrix(do.call(cbind, file_list_unique))
+
+# Clean up the pData
+pd_small <- pd[!grepl("T13_Day8",pd$title),]
+pd_small$Day <- sapply(strsplit(gsub(" \\[PBMC\\]", "", pd_small$title),"_"),"[",2)
+pd_small$subject <- sapply(strsplit(gsub(" \\[PBMC\\]", "", pd_small$title),"_"),"[",1)
+colnames(matrix) <- rownames(pd_small)
 ```
 
-#2. Find genes that differentially expressed compared to baseline
+#2. Find genes that differentially expressed at each time point compared to baseline
+```{r}
+# First, create an eSet that we can use
+new_set <- ExpressionSet(assayData = matrix+1)
+pData(new_set) <- pd_small
+```
+
+Then, set up matrix and use voom to convert RNA-seq data
+```{r}
+design <- model.matrix(~subject+Day, new_set)
+new_set_voom <- voom(new_set,design = design)
+```
+
+Use limma to estimate
+```{r}
+lm <- lmFit(new_set_voom, design)
+eb <- eBayes(lm)
+colnames(eb)
+```
+
+Look at each time point with FDR=0.01
+```{r}
+top <- vector("list", length = 10)
+for(i in 1:10){
+  coef <- paste0("DayDay", i)
+  top[[i]] <- topTable(eb, coef, number=Inf, p.value=0.01)
+}
+rownames(top[[1]])
+colnames(top[[1]])
+
+#It seems like that Day 1 had 58 significant observations, Day 3 has 1
+#And none for the rest of the days
+```
+
+Show fold-change of differential expression in heatmap
+```{r}
+logFC <- matrix(0, nrow=58, ncol=10)
+day1 <- top[[1]]
+logFC[,1] <- day1$logFC
+for (i in 2:10){
+  ceof <- paste0("DayDay", i)
+  logFC[,i] <- topTable(eb, coef, genelist=rownames(day1), number=58, sort.by="none")$logFC
+}
+
+rownames(logFC) <- rownames(day1)
+colnames(logFC) <- paste0("Day", 1:10)
+```
+
+Visualize results in heatmap
+```{r}
+pheatmap(logFC, cluster_cols=FALSE)
+```
 
 #3. Perform a GSEA analysis using camera and the MSigDB Reactome pathway gene signatures
+
+First, get gmt from MSigDB
+```{r}
+library(CAMERA)
+library(GSEABase)
+
+c2_set <- getGmt("GSEA-sets/c2.all.v4.0.symbols.gmt")
+gene_ids <- geneIds(c2_set)
+
+# Camera requires gene-indices. 
+if (exists("ids2indices")) { 
+    sets_indices <- ids2indices(gene_ids, rownames(new_set))
+}
+if (exists("symbols2indices")) {
+    sets_indices <- symbols2indices(gene_ids, rownames(new_set))    
+}
+```
+
+Finding enriched gene sets
+```{r}
+#Set up the contrast and use CAMERA
+res <- vector("list",length = 10)
+for(i in 1:10)
+  {
+  contrast <- paste0("DayDay",i)
+  cont_matrix <- makeContrasts(contrast, levels=design)
+  res[[i]] <- camera(new_set_voom, sets_indices, design=design, contrast=cont_matrix, sort=FALSE)
+}
+
+colnames(res[[1]])
+head(res[[1]])
+#In data frame for each time point, we have NGenes, Correlation, Direction, PValue and FDR
+```
+
+Visualize the results
+```{r}
+PValue <- sapply(res, function(x){ifelse(x$Direction=="Up", -10*log10(x$PValue), 10*log10(x$PValue))})
+rownames(PValue) <- rownames(res[[1]])
+PValue_max <- rowMax(abs(PValue))
+PValue_small <- PValue[PValue_max>30, ]
+#Restricted from 4722 rows to 106 rows (only rows with max.P>30 are kept)
+anno <- data.frame(Time=paste0("Day",1:10))
+rownames(anno) <- colnames(PValue_small)  <- paste0("Day",1:10)
+
+#Use heat map to visualize
+pheatmap(PValue_small, cluster_cols=FALSE,fontsize_row = 5)
+```
+
+#Citation
+The above codes refer to Dr. Gottardo's GSEA lecture notes.
