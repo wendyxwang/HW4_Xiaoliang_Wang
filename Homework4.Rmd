@@ -47,7 +47,6 @@ file_list <- lapply(files, read.table, sep='\t', header=TRUE)
 # Subset to only those rows where Gene contains only non-space characters
 # This addresses problems with T14 file containing 28 invalid rows at end of file
 file_list <- lapply(file_list, function(file_list)subset(file_list, grepl('^[^[:space:]]+$', Gene)))
-<<<<<<< HEAD
 
 # Remove duplicated rows
 file_list_unique <- lapply(file_list, function(x){x<-x[!duplicated(x$Gene),]; 
@@ -123,7 +122,6 @@ pheatmap(logFC, cluster_cols=FALSE)
 
 First, get gmt from MSigDB
 ```{r}
-library(CAMERA)
 library(GSEABase)
 
 c2_set <- getGmt("GSEA-sets/c2.all.v4.0.symbols.gmt")
